@@ -36,28 +36,101 @@ public class FieldAssistant {
 
         var app = new App();
 
-        app.messageShortcut("sme", (req, ctx) -> {
-            String userId = req.getPayload().getUser().getId();
-            Message message = req.getPayload().getMessage();
+        getSmeModal(app);
+        getResourcesModal(app);
+        getAppHome(app);
+        selectSme(app);
+        selectResourcesTopic(app);
+        shareResource(app);
 
-            ViewsOpenResponse viewsOpenResponse = ctx.client().viewsOpen(r -> r
-                    .triggerId(ctx.getTriggerId())
-                    .view(buildSmeView(message,
-                            req.getPayload().getChannel().getId(),
-                            req.getPayload().getMessageTs()))
+        var server = new SlackAppServer(app, 3001);
+        server.start();
+    }
+
+    private static App shareResource(App app) {
+        return app.blockAction("resource-share", (req, ctx) -> {
+            ctx.logger.info(req.getPayload().getActions().get(0).getValue());
+
+            String value = req.getPayload().getActions().get(0).getValue();
+            Map<String, String> privateMetadata = JsonOps.fromJson(req.getPayload().getView().getPrivateMetadata(), Map.class);
+
+            ctx.logger.info("metdata " + privateMetadata.get("channelId") + " " + privateMetadata.get("messageTs"));
+
+            var client = Slack.getInstance().methods();
+
+            client.chatPostMessage(r -> r
+                    .token(System.getenv("SLACK_BOT_TOKEN"))
+                    .channel(privateMetadata.get("channelId"))
+                    .threadTs(privateMetadata.get("messageTs"))
+                    .text(":white_check_mark: Check out the following resource for the answer to your question: " + value)
             );
-
-            if (!viewsOpenResponse.isOk()) {
-                String errorCode = viewsOpenResponse.getError();
-                ctx.logger.error("response = " + viewsOpenResponse.getResponseMetadata().toString());
-                ctx.logger.error("Failed to open modal for user {} and error {}", userId, errorCode);
-                ctx.respond(":x: Failed to open a modal view because of " + errorCode);
-            }
 
             return ctx.ack();
         });
+    }
 
-        app.messageShortcut("resources", (req, ctx) -> {
+    private static App selectResourcesTopic(App app) {
+        return app.blockAction("resource-topic-select", (req, ctx) -> {
+            ctx.logger.info("resource-topic-select..." + req.getPayload().getActions().get(0).getSelectedOption().getValue());
+
+            Map<String, String> privateMetadata = JsonOps.fromJson(req.getPayload().getView().getPrivateMetadata(), Map.class);
+
+            View view = buildResourcesView(req.getPayload().getActions().get(0).getSelectedOption().getValue(), privateMetadata.get("channelId"), privateMetadata.get("messageTs"));
+            ViewsUpdateResponse viewsUpdateResponse = ctx.client().viewsUpdate(r -> r
+                    .view(view)
+                    .viewId(req.getPayload().getView().getId())
+                    .hash(req.getPayload().getView().getHash())
+            );
+
+            return ctx.ack();
+        });
+    }
+
+    private static App selectSme(App app) {
+        return app.blockAction("sme-select", (req, ctx) -> {
+            String value = req.getPayload().getActions().get(0).getValue();
+            Map<String, String> privateMetadata = JsonOps.fromJson(req.getPayload().getView().getPrivateMetadata(), Map.class);
+            var client = Slack.getInstance().methods();
+
+            client.chatPostMessage(r -> r
+                    .token(System.getenv("SLACK_BOT_TOKEN"))
+                    .channel(privateMetadata.get("channelId"))
+                    .threadTs(privateMetadata.get("messageTs"))
+                    .linkNames(true)
+                    .text("@" + req.getPayload().getUser().getUsername() + " please respond!")
+            );
+
+            return ctx.ack();
+        });
+    }
+
+    private static App getAppHome(App app) {
+        return app.event(AppHomeOpenedEvent.class, (payload, ctx) -> {
+            var appHomeView = view(view -> view
+                    .type("home")
+                    .blocks(asBlocks(
+                            section(section -> section.text(markdownText(mt -> mt.text("*Welcome to your _App's Home_* :tada:")))),
+                            divider(),
+                            section(section -> section.text(markdownText(mt -> mt.text("Thiszz button won't do much for now but you can set up a listener for it using the `actions()` method and passing its unique `action_id`. See an example on <https://slack.dev/java-slack-sdk/guides/interactive-components|slack.dev/java-slack-sdk>.")))),
+                            actions(actions -> actions
+                                    .elements(asElements(
+                                            button(b -> b.text(plainText(pt -> pt.text("Click me!"))).value("button1").actionId("button_1"))
+                                    ))
+                            )
+                    ))
+            );
+
+            ctx.client().viewsPublish(r -> r
+                    .userId(payload.getEvent().getUser())
+                    .view(appHomeView)
+            );
+
+            return ctx.ack();
+        });
+    }
+
+    private static App getResourcesModal(App app) {
+        return app.messageShortcut("resources", (req, ctx) -> {
             String userId = req.getPayload().getUser().getId();
             Message message = req.getPayload().getMessage();
 
@@ -77,83 +150,29 @@ public class FieldAssistant {
 
             return ctx.ack();
         });
+    }
 
-        app.event(AppHomeOpenedEvent.class, (payload, ctx) -> {
-            var appHomeView = view(view -> view
-                    .type("home")
-                    .blocks(asBlocks(
-                            section(section -> section.text(markdownText(mt -> mt.text("*Welcome to your _App's Home_* :tada:")))),
-                            divider(),
-                            section(section -> section.text(markdownText(mt -> mt.text("Thiszz button won't do much for now but you can set up a listener for it using the `actions()` method and passing its unique `action_id`. See an example on <https://slack.dev/java-slack-sdk/guides/interactive-components|slack.dev/java-slack-sdk>.")))),
-                            actions(actions -> actions
-                                    .elements(asElements(
-                                            button(b -> b.text(plainText(pt -> pt.text("Click me!"))).value("button1").actionId("button_1"))
-                                    ))
-                            )
-                    ))
+    private static App getSmeModal(App app) {
+        return app.messageShortcut("sme", (req, ctx) -> {
+            String userId = req.getPayload().getUser().getId();
+            Message message = req.getPayload().getMessage();
+
+            ViewsOpenResponse viewsOpenResponse = ctx.client().viewsOpen(r -> r
+                    .triggerId(ctx.getTriggerId())
+                    .view(buildSmeView(message,
+                            req.getPayload().getChannel().getId(),
+                            req.getPayload().getMessageTs()))
             );
 
-            var res = ctx.client().viewsPublish(r -> r
-                    .userId(payload.getEvent().getUser())
-                    .view(appHomeView)
-            );
+            if (!viewsOpenResponse.isOk()) {
+                String errorCode = viewsOpenResponse.getError();
+                ctx.logger.error("response = " + viewsOpenResponse.getResponseMetadata().toString());
+                ctx.logger.error("Failed to open modal for user {} and error {}", userId, errorCode);
+                ctx.respond(":x: Failed to open a modal view because of " + errorCode);
+            }
 
             return ctx.ack();
         });
-
-        app.blockAction("sme-select", (req, ctx) -> {
-            String value = req.getPayload().getActions().get(0).getValue();
-            Map<String, String> privateMetadata = JsonOps.fromJson(req.getPayload().getView().getPrivateMetadata(), Map.class);
-            var client = Slack.getInstance().methods();
-
-            client.chatPostMessage(r -> r
-                    .token(System.getenv("SLACK_BOT_TOKEN"))
-                    .channel(privateMetadata.get("channelId"))
-                    .threadTs(privateMetadata.get("messageTs"))
-                    .linkNames(true)
-                    .text("@" + req.getPayload().getUser().getUsername() + " please respond!")
-            );
-
-            return ctx.ack();
-        });
-
-        app.blockAction("resource-topic-select", (req, ctx) -> {
-            ctx.logger.info("resource-topic-select..." + req.getPayload().getActions().get(0).getSelectedOption().getValue());
-
-            Map<String, String> privateMetadata = JsonOps.fromJson(req.getPayload().getView().getPrivateMetadata(), Map.class);
-
-            View view = buildResourcesView(req.getPayload().getActions().get(0).getSelectedOption().getValue(), privateMetadata.get("channelId"), privateMetadata.get("messageTs") );
-            ViewsUpdateResponse viewsUpdateResponse = ctx.client().viewsUpdate(r -> r
-                    .view(view)
-                    .viewId(req.getPayload().getView().getId())
-                    .hash(req.getPayload().getView().getHash())
-            );
-
-            return ctx.ack();
-        });
-
-        app.blockAction("resource-share", (req, ctx) -> {
-            ctx.logger.info(req.getPayload().getActions().get(0).getValue());
-
-            String value = req.getPayload().getActions().get(0).getValue();
-            Map<String, String> privateMetadata = JsonOps.fromJson(req.getPayload().getView().getPrivateMetadata(), Map.class);
-
-            ctx.logger.info("metdata " + privateMetadata.get("channelId") + " " + privateMetadata.get("messageTs"));
-
-            var client = Slack.getInstance().methods();
-
-            client.chatPostMessage(r -> r
-                    .token(System.getenv("SLACK_BOT_TOKEN"))
-                    .channel(privateMetadata.get("channelId"))
-                    .threadTs(privateMetadata.get("messageTs"))
-                    .text(":white_check_mark: Check out the following resource for the answer to your question: " + value)
-            );
-
-            return ctx.ack();
-        });
-
-        var server = new SlackAppServer(app, 3001);
-        server.start();
     }
 
     private static View buildResourcesView(String selection, String channelId, String messageTs) {
