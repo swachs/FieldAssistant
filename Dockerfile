@@ -5,6 +5,5 @@ WORKDIR /app
 
 COPY target/fieldAssistant-1.0-SNAPSHOT.jar ./fieldAssistant-1.0-SNAPSHOT.jar
 COPY target/lib ./lib
-COPY tokens ./tokens
 
 CMD ["java", "-jar", "fieldAssistant-1.0-SNAPSHOT.jar"]
